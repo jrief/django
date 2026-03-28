@@ -107,6 +107,18 @@ def message_from_bytes(s):
     return message
 
 
+def spy_on(klass, method_name="__init__"):
+    """
+    Observe a class instance's method while retaining its original behavior.
+    """
+    return mock.patch.object(
+        klass,
+        method_name,
+        autospec=True,
+        side_effect=getattr(klass, method_name),
+    )
+
+
 class MailTestsMixin:
     def assertMessageHasHeaders(self, message, headers):
         """
@@ -1685,8 +1697,8 @@ class EmailMessageTests(MailTestsMixin, SimpleTestCase):
         """
         # This is meant to verify EmailMessage.__init__() doesn't apply any
         # special processing that would be missing for properties set later.
-        original_connection = mail.get_connection(username="original")
-        new_connection = mail.get_connection(username="new")
+        original_connection = mail.get_connection()
+        new_connection = mail.get_connection()
         email = EmailMessage(
             "original subject",
             "original body\n",
@@ -1809,7 +1821,7 @@ class EmailMessageTests(MailTestsMixin, SimpleTestCase):
         )
 
     def test_send_fail_silently_conflict(self):
-        email = mail.EmailMessage(
+        email = EmailMessage(
             "Subject",
             "Body",
             "from@example.com",
@@ -1885,7 +1897,9 @@ class SendMailTests(SimpleTestCase, MailTestsMixin):
 
     def test_connection_arg(self):
         # Send using non-default connection.
-        connection = mail.get_connection("mail.custombackend.EmailBackend")
+        from .custombackend import EmailBackend
+
+        connection = EmailBackend()
         send_mail(
             "Subject",
             "Content",
@@ -1897,13 +1911,46 @@ class SendMailTests(SimpleTestCase, MailTestsMixin):
         self.assertEqual(len(connection.test_outbox), 1)
         self.assertEqual(connection.test_outbox[0].subject, "Subject")
 
+    @spy_on(locmem.EmailBackend)
+    def test_auth_args(self, mock_backend_init):
+        """
+        auth_user and auth_password are passed to the backend init as
+        username and password.
+        """
+        send_mail(
+            "Subject",
+            "Content",
+            "from@example.com",
+            ["to@example.com"],
+            auth_user="user",
+            auth_password="password",
+        )
+        mock_backend_init.assert_called_once()
+        init_kwargs = mock_backend_init.call_args.kwargs
+        self.assertEqual(init_kwargs["username"], "user")
+        self.assertEqual(init_kwargs["password"], "password")
+
+    @spy_on(locmem.EmailBackend)
+    def test_fail_silently_arg(self, mock_backend_init):
+        """fail_silently is passed to the backend init."""
+        send_mail(
+            "Subject",
+            "Content",
+            "from@example.com",
+            ["to@example.com"],
+            fail_silently=True,
+        )
+        mock_backend_init.assert_called_once()
+        init_kwargs = mock_backend_init.call_args.kwargs
+        self.assertIs(init_kwargs["fail_silently"], True)
+
     def test_fail_silently_conflict(self):
         msg = (
             "fail_silently cannot be used with a connection. "
             "Pass fail_silently to get_connection() instead."
         )
         with self.assertRaisesMessage(TypeError, msg):
-            mail.send_mail(
+            send_mail(
                 "Subject",
                 "Body",
                 "from@example.com",
@@ -1922,7 +1969,7 @@ class SendMailTests(SimpleTestCase, MailTestsMixin):
                 self.subTest(param=param),
                 self.assertRaisesMessage(TypeError, msg),
             ):
-                mail.send_mail(
+                send_mail(
                     "subject",
                     "body",
                     "from@example.com",
@@ -1937,9 +1984,34 @@ class SendMassMailTests(SimpleTestCase):
     Tests for django.core.mail.send_mass_mail().
     """
 
+    def test_send_mass_mail(self):
+        count = send_mass_mail(
+            [
+                ("Subject1", "Content1", "from1@example.com", ["to1@example.com"]),
+                (
+                    "Subject2",
+                    "Content2",
+                    "from2@example.com",
+                    ["to2a@example.com", "to2b@example.com"],
+                ),
+            ],
+        )
+        self.assertEqual(count, 2)
+        self.assertEqual(len(mail.outbox), 2)
+        self.assertEqual(mail.outbox[0].subject, "Subject1")
+        self.assertEqual(mail.outbox[0].body, "Content1")
+        self.assertEqual(mail.outbox[0].from_email, "from1@example.com")
+        self.assertEqual(mail.outbox[0].to, ["to1@example.com"])
+        self.assertEqual(mail.outbox[1].subject, "Subject2")
+        self.assertEqual(mail.outbox[1].body, "Content2")
+        self.assertEqual(mail.outbox[1].from_email, "from2@example.com")
+        self.assertEqual(mail.outbox[1].to, ["to2a@example.com", "to2b@example.com"])
+
     def test_connection_arg(self):
         # Send using non-default connection.
-        connection = mail.get_connection("mail.custombackend.EmailBackend")
+        from .custombackend import EmailBackend
+
+        connection = EmailBackend()
         send_mass_mail(
             [
                 ("Subject1", "Content1", "from1@example.com", ["to1@example.com"]),
@@ -1952,6 +2024,33 @@ class SendMassMailTests(SimpleTestCase):
         self.assertEqual(connection.test_outbox[0].subject, "Subject1")
         self.assertEqual(connection.test_outbox[1].subject, "Subject2")
 
+    @spy_on(locmem.EmailBackend)
+    def test_auth_args(self, mock_backend_init):
+        """
+        auth_user and auth_password are passed to the backend init as
+        username and password.
+        """
+        send_mass_mail(
+            [("Subject1", "Content1", "from1@example.com", ["to1@example.com"])],
+            auth_user="user",
+            auth_password="password",
+        )
+        mock_backend_init.assert_called_once()
+        init_kwargs = mock_backend_init.call_args.kwargs
+        self.assertEqual(init_kwargs["username"], "user")
+        self.assertEqual(init_kwargs["password"], "password")
+
+    @spy_on(locmem.EmailBackend)
+    def test_fail_silently_arg(self, mock_backend_init):
+        """fail_silently is passed to the backend init."""
+        send_mass_mail(
+            [("Subject1", "Content1", "from1@example.com", ["to1@example.com"])],
+            fail_silently=True,
+        )
+        mock_backend_init.assert_called_once()
+        init_kwargs = mock_backend_init.call_args.kwargs
+        self.assertIs(init_kwargs["fail_silently"], True)
+
     def test_send_fail_silently_conflict(self):
         datatuple = (("Subject", "Message", "from@example.com", ["to@example.com"]),)
         msg = (
@@ -1959,7 +2058,7 @@ class SendMassMailTests(SimpleTestCase):
             "Pass fail_silently to get_connection() instead."
         )
         with self.assertRaisesMessage(TypeError, msg):
-            mail.send_mass_mail(
+            send_mass_mail(
                 datatuple, fail_silently=True, connection=mail.get_connection()
             )
 
@@ -1974,7 +2073,7 @@ class SendMassMailTests(SimpleTestCase):
                 self.subTest(param=param),
                 self.assertRaisesMessage(TypeError, msg),
             ):
-                mail.send_mass_mail(
+                send_mass_mail(
                     datatuple, **{param: "value"}, connection=mail.get_connection()
                 )
 
@@ -2128,7 +2227,9 @@ class MailAdminsAndManagersTests(SimpleTestCase, MailTestsMixin):
     @override_settings(ADMINS=["nobody@example.com"])
     def test_connection_arg_mail_admins(self):
         # Send using non-default connection.
-        connection = mail.get_connection("mail.custombackend.EmailBackend")
+        from .custombackend import EmailBackend
+
+        connection = EmailBackend()
         mail_admins("Admin message", "Content", connection=connection)
         self.assertEqual(mail.outbox, [])
         self.assertEqual(len(connection.test_outbox), 1)
@@ -2137,7 +2238,9 @@ class MailAdminsAndManagersTests(SimpleTestCase, MailTestsMixin):
     @override_settings(MANAGERS=["nobody@example.com"])
     def test_connection_arg_mail_managers(self):
         # Send using non-default connection.
-        connection = mail.get_connection("mail.custombackend.EmailBackend")
+        from .custombackend import EmailBackend
+
+        connection = EmailBackend()
         mail_managers("Manager message", "Content", connection=connection)
         self.assertEqual(mail.outbox, [])
         self.assertEqual(len(connection.test_outbox), 1)
@@ -2149,7 +2252,7 @@ class MailAdminsAndManagersTests(SimpleTestCase, MailTestsMixin):
             "Pass fail_silently to get_connection() instead."
         )
         with self.assertRaisesMessage(TypeError, msg):
-            mail.mail_admins(
+            mail_admins(
                 "Subject",
                 "Message",
                 fail_silently=True,
@@ -2162,7 +2265,7 @@ class MailAdminsAndManagersTests(SimpleTestCase, MailTestsMixin):
             "Pass fail_silently to get_connection() instead."
         )
         with self.assertRaisesMessage(TypeError, msg):
-            mail.mail_managers(
+            mail_managers(
                 "Subject",
                 "Message",
                 fail_silently=True,
@@ -2174,6 +2277,17 @@ class GetConnectionTests(SimpleTestCase):
     """
     Tests for django.core.mail.get_connection().
     """
+
+    @override_settings(EMAIL_BACKEND="django.core.mail.backends.console.EmailBackend")
+    def test_uses_email_backend_setting(self):
+        connection = mail.get_connection()
+        self.assertIsInstance(connection, console.EmailBackend)
+
+    @override_settings(EMAIL_BACKEND="django.core.mail.backends.smtp.EmailBackend")
+    def test_backend_specific_kwargs(self):
+        connection = mail.get_connection(host="mail.example.com")
+        self.assertIsInstance(connection, smtp.EmailBackend)
+        self.assertEqual(connection.host, "mail.example.com")
 
     def test_backend_arg(self):
         """Test backend argument of mail.get_connection()"""

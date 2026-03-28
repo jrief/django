@@ -4,6 +4,7 @@ import threading
 import traceback
 import unittest
 import warnings
+from contextlib import contextmanager
 from functools import partial
 from io import StringIO
 from unittest import mock
@@ -47,6 +48,7 @@ from django.test.utils import (
     isolate_apps,
     override_settings,
     setup_test_environment,
+    teardown_test_environment,
 )
 from django.urls import NoReverseMatch, path, reverse, reverse_lazy
 from django.utils.html import VOID_ELEMENTS
@@ -1813,15 +1815,43 @@ class SetupTestEnvironmentTests(SimpleTestCase):
         ):
             setup_test_environment()
 
+    @contextmanager
+    def reset_test_state(self):
+        """
+        Context manager that allows calling setup_test_environment() in a test.
+        """
+        with mock.patch("django.test.utils._TestState") as test_state:
+            del test_state.saved_data
+            yield
+
     def test_allowed_hosts(self):
         for type_ in (list, tuple):
             with self.subTest(type_=type_):
                 allowed_hosts = type_("*")
-                with mock.patch("django.test.utils._TestState") as x:
-                    del x.saved_data
-                    with self.settings(ALLOWED_HOSTS=allowed_hosts):
-                        setup_test_environment()
-                        self.assertEqual(settings.ALLOWED_HOSTS, ["*", "testserver"])
+                with (
+                    self.reset_test_state(),
+                    self.settings(ALLOWED_HOSTS=allowed_hosts),
+                ):
+                    setup_test_environment()
+                    self.assertEqual(settings.ALLOWED_HOSTS, ["*", "testserver"])
+
+    def test_email_backend_override(self):
+        with (
+            self.reset_test_state(),
+            self.settings(
+                EMAIL_BACKEND="django.core.mail.backends.console.EmailBackend"
+            ),
+        ):
+            setup_test_environment()
+            self.assertEqual(
+                settings.EMAIL_BACKEND,
+                "django.core.mail.backends.locmem.EmailBackend",
+            )
+            teardown_test_environment()
+            self.assertEqual(
+                settings.EMAIL_BACKEND,
+                "django.core.mail.backends.console.EmailBackend",
+            )
 
 
 class OverrideSettingsTests(SimpleTestCase):
