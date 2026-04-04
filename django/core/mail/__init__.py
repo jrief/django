@@ -6,7 +6,12 @@ import warnings
 
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
-from django.core.mail.handler import InvalidEmailProvider
+from django.core.mail.handler import (
+    DEFAULT_EMAIL_PROVIDER_ALIAS,
+    EmailProviderDoesNotExist,
+    EmailProvidersHandler,
+    InvalidEmailProvider,
+)
 
 # Imported for backwards compatibility and for the sake
 # of a cleaner namespace. These symbols used to be in
@@ -26,7 +31,10 @@ from django.utils.deprecation import RemovedInDjango70Warning, deprecate_posargs
 from django.utils.functional import Promise
 from django.utils.module_loading import import_string
 
+from .deprecation import report_using_incompatibility
+
 __all__ = [
+    "EmailProviderDoesNotExist",
     "InvalidEmailProvider",
     "CachedDnsName",
     "DNS_NAME",
@@ -34,6 +42,7 @@ __all__ = [
     "EmailMultiAlternatives",
     "DEFAULT_ATTACHMENT_MIME_TYPE",
     "make_msgid",
+    "providers",
     "get_connection",
     "send_mail",
     "send_mass_mail",
@@ -50,6 +59,10 @@ __all__ = [
 ]
 
 
+providers = EmailProvidersHandler()
+
+
+# RemovedInDjango70Warning.
 @deprecate_posargs(RemovedInDjango70Warning, ["fail_silently"])
 def get_connection(backend=None, *, fail_silently=False, **kwds):
     """Load an email backend and return an instance of it.
@@ -59,8 +72,23 @@ def get_connection(backend=None, *, fail_silently=False, **kwds):
     Both fail_silently and other keyword arguments are used in the
     constructor of the backend.
     """
+    if providers._is_configured:
+        # Support get_connection(**kwargs) from EMAIL_PROVIDERS["default"].
+        if backend is not None:
+            raise RuntimeError(
+                "get_connection(backend, ...) is not supported with EMAIL_PROVIDERS."
+            )
+        deprecated_kwargs = kwds
+        if fail_silently:
+            deprecated_kwargs["fail_silently"] = fail_silently
+        return providers.create_connection(
+            DEFAULT_EMAIL_PROVIDER_ALIAS, _deprecated_kwargs=deprecated_kwargs
+        )
+
     klass = import_string(backend or settings.EMAIL_BACKEND)
-    return klass(fail_silently=fail_silently, **kwds)
+    if fail_silently:
+        kwds = kwds | {"fail_silently": fail_silently}
+    return klass(**kwds)
 
 
 @deprecate_posargs(
@@ -84,6 +112,7 @@ def send_mail(
     auth_password=None,
     connection=None,
     html_message=None,
+    using=None,
 ):
     """
     Easy wrapper for sending a single message to a recipient list. All members
@@ -96,7 +125,18 @@ def send_mail(
     Note: The API for this method is frozen. New code wanting to extend the
     functionality should use the EmailMessage class directly.
     """
-    if connection is None:
+    # RemovedInDjango70Warning: change entire implementation to:
+    #   email = EmailMultiAlternatives(
+    #       subject, message, from_email, recipient_list
+    #   )
+    #   if html_message:
+    #       email.attach_alternative(html_message, "text/html")
+    #   return email.send(using=using)
+    if using is not None:
+        report_using_incompatibility(
+            connection, fail_silently, auth_user, auth_password
+        )
+    elif connection is None:
         options = {"fail_silently": fail_silently}
         if auth_user is not None:
             options["username"] = auth_user
@@ -120,7 +160,7 @@ def send_mail(
     if html_message:
         mail.attach_alternative(html_message, "text/html")
 
-    return mail.send()
+    return mail.send(using=using)
 
 
 @deprecate_posargs(
@@ -139,6 +179,7 @@ def send_mass_mail(
     auth_user=None,
     auth_password=None,
     connection=None,
+    using=None,
 ):
     """
     Given a datatuple of (subject, message, from_email, recipient_list), send
@@ -152,7 +193,16 @@ def send_mass_mail(
     Note: The API for this method is frozen. New code wanting to extend the
     functionality should use the EmailMessage class directly.
     """
-    if connection is None:
+    # RemovedInDjango70Warning: change entire implementation to:
+    #   messages = [...]
+    #   provider = providers.default if using is None else providers[using]
+    #   return provider.send_messages(messages)
+    if using is not None:
+        report_using_incompatibility(
+            connection, fail_silently, auth_user, auth_password
+        )
+        connection = providers[using]
+    elif connection is None:
         options = {"fail_silently": fail_silently}
         if auth_user is not None:
             options["username"] = auth_user
@@ -185,12 +235,16 @@ def _send_server_message(
     html_message=None,
     fail_silently=False,
     connection=None,
+    using=None,
 ):
-    if connection is not None and fail_silently:
+    if using is not None:
+        report_using_incompatibility(connection, fail_silently)
+    elif connection is not None and fail_silently:
         raise TypeError(
             "fail_silently cannot be used with a connection. "
             "Pass fail_silently to get_connection() instead."
         )
+
     recipients = getattr(settings, setting_name)
     if not recipients:
         return
@@ -221,14 +275,20 @@ def _send_server_message(
     )
     if html_message:
         mail.attach_alternative(html_message, "text/html")
-    mail.send(fail_silently=fail_silently)
+    mail.send(using=using, fail_silently=fail_silently)
 
 
 @deprecate_posargs(
     RemovedInDjango70Warning, ["fail_silently", "connection", "html_message"]
 )
 def mail_admins(
-    subject, message, *, fail_silently=False, connection=None, html_message=None
+    subject,
+    message,
+    *,
+    fail_silently=False,
+    connection=None,
+    html_message=None,
+    using=None,
 ):
     """Send a message to the admins, as defined by the ADMINS setting."""
     _send_server_message(
@@ -238,6 +298,7 @@ def mail_admins(
         html_message=html_message,
         fail_silently=fail_silently,
         connection=connection,
+        using=using,
     )
 
 
@@ -245,7 +306,13 @@ def mail_admins(
     RemovedInDjango70Warning, ["fail_silently", "connection", "html_message"]
 )
 def mail_managers(
-    subject, message, *, fail_silently=False, connection=None, html_message=None
+    subject,
+    message,
+    *,
+    fail_silently=False,
+    connection=None,
+    html_message=None,
+    using=None,
 ):
     """Send a message to the managers, as defined by the MANAGERS setting."""
     _send_server_message(
@@ -255,6 +322,7 @@ def mail_managers(
         html_message=html_message,
         fail_silently=fail_silently,
         connection=connection,
+        using=using,
     )
 
 

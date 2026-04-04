@@ -129,6 +129,22 @@ class SharedEmailBackendTests(MailTestsMixin):
         backend = self.backend_class(**self.backend_test_kwargs)
         self.assertIsNone(backend.alias)
 
+    def test_create_from_providers(self):
+        backend_import_path = (
+            f"{self.backend_class.__module__}.{self.backend_class.__name__}"
+        )
+        with self.settings(
+            EMAIL_PROVIDERS={
+                "custom": {
+                    "BACKEND": backend_import_path,
+                    "OPTIONS": self.backend_test_kwargs,
+                }
+            }
+        ):
+            backend = mail.providers["custom"]
+            self.assertIsInstance(backend, self.backend_class)
+            self.assertEqual(backend.alias, "custom")
+
     def test_send(self):
         email = EmailMessage(
             "Subject", "Content\n", "from@example.com", ["to@example.com"]
