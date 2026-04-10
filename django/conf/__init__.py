@@ -13,9 +13,9 @@ import traceback
 import warnings
 from pathlib import Path
 
-import django
 from django.conf import global_settings
 from django.core.exceptions import ImproperlyConfigured
+from django.utils.deprecation import django_file_prefixes
 from django.utils.functional import LazyObject, empty
 
 ENVIRONMENT_VARIABLE = "DJANGO_SETTINGS_MODULE"
@@ -141,11 +141,15 @@ class LazySettings(LazyObject):
     def _show_deprecation_warning(self, message, category):
         stack = traceback.extract_stack()
         # Show a warning if the setting is used outside of Django.
-        # Stack index: -1 this line, -2 the property, -3 the
-        # LazyObject __getattribute__(), -4 the caller.
-        filename, _, _, _ = stack[-4]
-        if not filename.startswith(os.path.dirname(django.__file__)):
-            warnings.warn(message, category, stacklevel=2)
+        # Find the closest stack frame not in this file.
+        filename = "unknown filename"
+        level = len(stack) - 2
+        while (level >= 0 and (filename := stack[level][0])) == __file__:
+            level -= 1
+        django_prefixes = django_file_prefixes() or "django location unknown"
+        if not filename.startswith(django_prefixes):
+            stacklevel = len(stack) - level
+            warnings.warn(message, category, stacklevel=stacklevel)
 
 
 class Settings:
