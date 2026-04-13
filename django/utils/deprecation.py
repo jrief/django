@@ -1,6 +1,7 @@
 import functools
 import inspect
 import os
+import traceback
 import warnings
 from collections import Counter
 from inspect import iscoroutinefunction, markcoroutinefunction
@@ -28,6 +29,31 @@ class RemovedInDjango70Warning(PendingDeprecationWarning):
 
 
 RemovedAfterNextVersionWarning = RemovedInDjango70Warning
+
+
+def warn_about_external_use(message, category, *, skip_frames=0):
+    """
+    Issue a warning if the caller was called from outside Django, otherwise do
+    nothing. This can be used to avoid cascading deprecation warnings when one
+    deprecated feature is implemented with another deprecated feature.
+
+    By default, looks at the filename two levels from the top of the stack,
+    ignoring this function and the one calling it. Set skip_frames to ignore
+    additional levels, e.g., when used in a helper function or a function
+    wrapped by a decorator.
+
+    See also LazySettings._show_deprecation_warning(), which is similar but
+    specific to the settings module.
+    """
+    stack = traceback.extract_stack()
+    stacklevel = 2 + skip_frames
+    try:
+        filename = stack[-(stacklevel + 1)][0]
+    except IndexError:
+        filename = "unknown filename"
+    django_prefixes = django_file_prefixes() or "django location unknown"
+    if not filename.startswith(django_prefixes):
+        warnings.warn(message, category=category, stacklevel=stacklevel)
 
 
 class warn_about_renamed_method:
