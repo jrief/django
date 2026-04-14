@@ -499,6 +499,14 @@ class BrokenLinkEmailsMiddlewareTest(SimpleTestCase):
         BrokenLinkEmailsMiddleware(self.get_response)(self.req)
         self.assertEqual(len(mail.outbox), 1)
 
+    @mock.patch("django.core.mail.backends.locmem.EmailBackend")
+    def test_uses_fail_silently(self, mock_backend):
+        """The email backend is initialized with fail_silently=True."""
+        self.req.META["HTTP_REFERER"] = "/another/url/"
+        BrokenLinkEmailsMiddleware(self.get_response)(self.req)
+        mock_backend.assert_called_once()
+        self.assertIs(mock_backend.call_args.kwargs["fail_silently"], True)
+
 
 @override_settings(ROOT_URLCONF="middleware.cond_get_urls")
 class ConditionalGetMiddlewareTest(SimpleTestCase):

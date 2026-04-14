@@ -26,7 +26,6 @@ from django.utils.log import (
 from django.views.debug import ExceptionReporter
 
 from . import views
-from .logconfig import MyEmailBackend
 
 
 class LoggingFiltersTest(SimpleTestCase):
@@ -286,9 +285,13 @@ class AdminEmailHandlerTest(SimpleTestCase):
             h for h in logger.handlers if h.__class__.__name__ == "AdminEmailHandler"
         ][0]
 
-    def test_fail_silently(self):
-        admin_email_handler = self.get_admin_email_handler(self.logger)
-        self.assertTrue(admin_email_handler.connection().fail_silently)
+    @override_settings(ADMINS=["admin@example.com"])
+    @mock.patch("django.core.mail.backends.locmem.EmailBackend")
+    def test_uses_fail_silently(self, mock_backend):
+        """The email backend is initialized with fail_silently=True."""
+        self.logger.error("All work and no play makes Jack a dull boy")
+        mock_backend.assert_called_once()
+        self.assertIs(mock_backend.call_args.kwargs["fail_silently"], True)
 
     @override_settings(
         ADMINS=["admin@example.com"],
@@ -383,36 +386,19 @@ class AdminEmailHandlerTest(SimpleTestCase):
         self.assertNotIn("\r", mail.outbox[0].subject)
         self.assertEqual(mail.outbox[0].subject, expected_subject)
 
-    @override_settings(
-        ADMINS=["admin@example.com"],
-        DEBUG=False,
-    )
-    def test_uses_custom_email_backend(self):
-        """
-        Refs #19325
-        """
-        message = "All work and no play makes Jack a dull boy"
-        admin_email_handler = self.get_admin_email_handler(self.logger)
-        mail_admins_called = {"called": False}
-
-        def my_mail_admins(*args, **kwargs):
-            connection = kwargs["connection"]
-            self.assertIsInstance(connection, MyEmailBackend)
-            mail_admins_called["called"] = True
-
-        # Monkeypatches
-        orig_mail_admins = mail.mail_admins
-        orig_email_backend = admin_email_handler.email_backend
-        mail.mail_admins = my_mail_admins
-        admin_email_handler.email_backend = "logging_tests.logconfig.MyEmailBackend"
-
-        try:
-            self.logger.error(message)
-            self.assertTrue(mail_admins_called["called"])
-        finally:
-            # Revert Monkeypatches
-            mail.mail_admins = orig_mail_admins
-            admin_email_handler.email_backend = orig_email_backend
+    @override_settings(ADMINS=["admin@example.com"])
+    @mock.patch("logging_tests.logconfig.MyEmailBackend.send_messages")
+    def test_uses_custom_email_backend(self, mock_my_backend_send_messages):
+        """Supports email_backend argument (#19325)."""
+        record = self.logger.makeRecord(
+            "name", logging.ERROR, "function", "lno", "message", None, None
+        )
+        record.request = self.request_factory.get("/")
+        handler = AdminEmailHandler(
+            email_backend="logging_tests.logconfig.MyEmailBackend"
+        )
+        handler.emit(record)
+        mock_my_backend_send_messages.assert_called_once()
 
     @override_settings(
         ADMINS=["admin@example.com"],
@@ -442,9 +428,7 @@ class AdminEmailHandlerTest(SimpleTestCase):
     def test_customize_send_mail_method(self):
         class ManagerEmailHandler(AdminEmailHandler):
             def send_mail(self, subject, message, *args, **kwargs):
-                mail.mail_managers(
-                    subject, message, *args, connection=self.connection(), **kwargs
-                )
+                mail.mail_managers(subject, message, *args, **kwargs)
 
         handler = ManagerEmailHandler()
         record = self.logger.makeRecord(
