@@ -27,11 +27,20 @@ from django.core.mail.message import (
     make_msgid,
 )
 from django.core.mail.utils import DNS_NAME, CachedDnsName
-from django.utils.deprecation import RemovedInDjango70Warning, deprecate_posargs
+from django.utils.deprecation import (
+    RemovedInDjango70Warning,
+    deprecate_posargs,
+    warn_about_external_use,
+)
 from django.utils.functional import Promise
 from django.utils.module_loading import import_string
 
-from .deprecation import report_using_incompatibility
+from .deprecation import (
+    AUTH_ARGS_WARNING,
+    CONNECTION_ARG_WARNING,
+    FAIL_SILENTLY_ARG_WARNING,
+    report_using_incompatibility,
+)
 
 __all__ = [
     "EmailProviderDoesNotExist",
@@ -72,6 +81,12 @@ def get_connection(backend=None, *, fail_silently=False, **kwds):
     Both fail_silently and other keyword arguments are used in the
     constructor of the backend.
     """
+    msg = (
+        "get_connection() is deprecated. See 'Migrating to EMAIL_PROVIDERS' "
+        "in Django's documentation for recommended replacements."
+    )
+    warn_about_external_use(msg, RemovedInDjango70Warning, skip_frames=1)
+
     if providers._is_configured:
         # Support get_connection(**kwargs) from EMAIL_PROVIDERS["default"].
         if backend is not None:
@@ -119,8 +134,6 @@ def send_mail(
     of the recipient list will see the other recipients in the 'To' field.
 
     If from_email is None, use the DEFAULT_FROM_EMAIL setting.
-    If auth_user is None, use the EMAIL_HOST_USER setting.
-    If auth_password is None, use the EMAIL_HOST_PASSWORD setting.
 
     Note: The API for this method is frozen. New code wanting to extend the
     functionality should use the EmailMessage class directly.
@@ -132,6 +145,19 @@ def send_mail(
     #   if html_message:
     #       email.attach_alternative(html_message, "text/html")
     #   return email.send(using=using)
+    if fail_silently:
+        warn_about_external_use(
+            FAIL_SILENTLY_ARG_WARNING, RemovedInDjango70Warning, skip_frames=1
+        )
+    if auth_user is not None or auth_password is not None:
+        warn_about_external_use(
+            AUTH_ARGS_WARNING, RemovedInDjango70Warning, skip_frames=1
+        )
+    if connection is not None:
+        warn_about_external_use(
+            CONNECTION_ARG_WARNING, RemovedInDjango70Warning, skip_frames=1
+        )
+
     if using is not None:
         report_using_incompatibility(
             connection, fail_silently, auth_user, auth_password
@@ -186,9 +212,6 @@ def send_mass_mail(
     each message to each recipient list. Return the number of emails sent.
 
     If from_email is None, use the DEFAULT_FROM_EMAIL setting.
-    If auth_user and auth_password are set, use them to log in.
-    If auth_user is None, use the EMAIL_HOST_USER setting.
-    If auth_password is None, use the EMAIL_HOST_PASSWORD setting.
 
     Note: The API for this method is frozen. New code wanting to extend the
     functionality should use the EmailMessage class directly.
@@ -197,6 +220,19 @@ def send_mass_mail(
     #   messages = [...]
     #   provider = providers.default if using is None else providers[using]
     #   return provider.send_messages(messages)
+    if fail_silently:
+        warn_about_external_use(
+            FAIL_SILENTLY_ARG_WARNING, RemovedInDjango70Warning, skip_frames=1
+        )
+    if auth_user is not None or auth_password is not None:
+        warn_about_external_use(
+            AUTH_ARGS_WARNING, RemovedInDjango70Warning, skip_frames=1
+        )
+    if connection is not None:
+        warn_about_external_use(
+            CONNECTION_ARG_WARNING, RemovedInDjango70Warning, skip_frames=1
+        )
+
     if using is not None:
         report_using_incompatibility(
             connection, fail_silently, auth_user, auth_password
@@ -237,6 +273,16 @@ def _send_server_message(
     connection=None,
     using=None,
 ):
+    # skip_frames=2: this helper's caller + its @deprecate_posargs decorator.
+    if fail_silently:
+        warn_about_external_use(
+            FAIL_SILENTLY_ARG_WARNING, RemovedInDjango70Warning, skip_frames=2
+        )
+    if connection is not None:
+        warn_about_external_use(
+            CONNECTION_ARG_WARNING, RemovedInDjango70Warning, skip_frames=2
+        )
+
     if using is not None:
         report_using_incompatibility(connection, fail_silently)
     elif connection is not None and fail_silently:
