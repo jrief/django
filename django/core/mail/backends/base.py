@@ -22,13 +22,11 @@ class BaseEmailBackend:
     """
 
     # RemovedInDjango70Warning: _ignore_unknown_kwargs.
-    def __init__(
-        self, *, alias=None, fail_silently=False, _ignore_unknown_kwargs=None, **kwargs
-    ):
+    def __init__(self, *, alias=None, _ignore_unknown_kwargs=None, **kwargs):
         self.alias = alias
-        self.fail_silently = fail_silently
 
         # RemovedInDjango70Warning.
+        self._fail_silently = kwargs.get("fail_silently", False)
         if _ignore_unknown_kwargs:
             for ignored in _ignore_unknown_kwargs:
                 kwargs.pop(ignored, None)
@@ -73,6 +71,19 @@ class BaseEmailBackend:
                     RemovedInDjango70Warning,
                     skip_frames=skip_frames,
                 )
+
+    # RemovedInDjango70Warning.
+    def __getattr__(self, name):
+        if name == "fail_silently":
+            msg = (
+                "BaseEmailBackend.fail_silently is deprecated. A subclass "
+                "that supports fail_silently must set its own attribute."
+            )
+            warn_about_external_use(msg, RemovedInDjango70Warning)
+            return self._fail_silently
+        raise AttributeError(
+            f"{type(self).__name__!r} object has no attribute {name!r}"
+        )
 
     def open(self):
         """

@@ -36,7 +36,8 @@ class EmailBackend(BaseEmailBackend):
         ssl_certfile=None,
         **kwargs,
     ):
-        super().__init__(fail_silently=fail_silently, **kwargs)
+        super().__init__(**kwargs)
+        self.fail_silently = fail_silently
         if self.alias is not None:
             # Being initialized from mail.providers.
             self.host = host
