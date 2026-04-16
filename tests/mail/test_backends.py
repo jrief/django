@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 import socket
 import ssl
@@ -25,6 +26,14 @@ try:
     HAS_AIOSMTPD = True
 except ImportError:
     HAS_AIOSMTPD = False
+
+
+# RemovedInDjango70Warning.
+def ignore_directly_creating_backend_warning():
+    return ignore_warnings(
+        category=RemovedInDjango70Warning,
+        message=re.escape("Directly creating EmailBackend instances is deprecated."),
+    )
 
 
 class BaseEmailBackendTests(SimpleTestCase):
@@ -256,7 +265,10 @@ class SharedEmailBackendTests(MailTestsMixin):
             "'unknown_kwarg'. In Django 7.0, BaseEmailBackend will raise a "
             "TypeError for unknown keyword arguments."
         )
-        with self.assertWarnsMessage(RemovedInDjango70Warning, msg):
+        with (
+            self.assertWarnsMessage(RemovedInDjango70Warning, msg),
+            ignore_directly_creating_backend_warning(),
+        ):
             # (Can't call self.create_backend()--it includes alias argument.)
             backend = self.backend_class(
                 **self.backend_test_kwargs, unknown_kwarg="foo"
@@ -599,6 +611,7 @@ class SMTPBackendTestsBase(SimpleTestCase):
 
 
 @skipUnless(HAS_AIOSMTPD, "No aiosmtpd library detected.")
+@ignore_directly_creating_backend_warning()
 class SMTPBackendTests(SharedEmailBackendTests, SMTPBackendTestsBase):
     backend_class = smtp.EmailBackend
 
@@ -650,6 +663,21 @@ class SMTPBackendTests(SharedEmailBackendTests, SMTPBackendTestsBase):
         self.assertIsNone(backend.use_ssl)
         self.assertIsNone(backend.ssl_certfile)
         self.assertIsNone(backend.ssl_keyfile)
+
+    # RemovedInDjango70Warning.
+    def test_warns_about_direct_construction(self):
+        """
+        Directly creating EmailBackend instances is deprecated. Default values
+        come from deprecated settings without special handling for port.
+        """
+        msg = (
+            "Directly creating EmailBackend instances is deprecated. Use "
+            "mail.providers instead."
+        )
+        with self.assertWarnsMessage(RemovedInDjango70Warning, msg):
+            backend = self.backend_class(use_tls=True)
+        self.assertEqual(backend.host, "localhost")
+        self.assertEqual(backend.port, 25)
 
     def test_host_option_required(self):
         msg = "EMAIL_PROVIDERS['test_alias']: OPTIONS must define 'host'."
