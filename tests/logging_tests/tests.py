@@ -7,13 +7,19 @@ from admin_scripts.tests import AdminScriptTestCase
 
 from django.conf import settings
 from django.core import mail
-from django.core.exceptions import DisallowedHost, PermissionDenied, SuspiciousOperation
+from django.core.exceptions import (
+    DisallowedHost,
+    ImproperlyConfigured,
+    PermissionDenied,
+    SuspiciousOperation,
+)
 from django.core.files.temp import NamedTemporaryFile
 from django.core.management import color
 from django.http import HttpResponse
 from django.http.multipartparser import MultiPartParserError
 from django.test import RequestFactory, SimpleTestCase, override_settings
 from django.test.utils import LoggingCaptureMixin
+from django.utils.deprecation import RemovedInDjango70Warning
 from django.utils.log import (
     DEFAULT_LOGGING,
     AdminEmailHandler,
@@ -285,6 +291,14 @@ class AdminEmailHandlerTest(SimpleTestCase):
             h for h in logger.handlers if h.__class__.__name__ == "AdminEmailHandler"
         ][0]
 
+    def make_log_record(self, path="/", *args, **kwargs):
+        record = self.logger.makeRecord(
+            "name", logging.ERROR, "function", "lno", "message", None, None
+        )
+        record.request = self.request_factory.get(path, *args, **kwargs)
+        return record
+
+    # RemovedInDjango70Warning.
     @override_settings(ADMINS=["admin@example.com"])
     @mock.patch("django.core.mail.backends.locmem.EmailBackend")
     def test_uses_fail_silently(self, mock_backend):
@@ -386,19 +400,80 @@ class AdminEmailHandlerTest(SimpleTestCase):
         self.assertNotIn("\r", mail.outbox[0].subject)
         self.assertEqual(mail.outbox[0].subject, expected_subject)
 
+    # RemovedInDjango70Warning.
     @override_settings(ADMINS=["admin@example.com"])
     @mock.patch("logging_tests.logconfig.MyEmailBackend.send_messages")
     def test_uses_custom_email_backend(self, mock_my_backend_send_messages):
         """Supports email_backend argument (#19325)."""
-        record = self.logger.makeRecord(
-            "name", logging.ERROR, "function", "lno", "message", None, None
-        )
-        record.request = self.request_factory.get("/")
-        handler = AdminEmailHandler(
-            email_backend="logging_tests.logconfig.MyEmailBackend"
-        )
-        handler.emit(record)
+        msg = "The 'email_backend' argument is deprecated. Use 'using' instead."
+        with self.assertWarnsMessage(RemovedInDjango70Warning, msg):
+            handler = AdminEmailHandler(
+                email_backend="logging_tests.logconfig.MyEmailBackend"
+            )
+        handler.emit(self.make_log_record())
         mock_my_backend_send_messages.assert_called_once()
+
+    @override_settings(
+        ADMINS=["admin@example.com"],
+        EMAIL_PROVIDERS={
+            "default": {"BACKEND": "django.core.mail.backends.locmem.EmailBackend"}
+        },
+    )
+    def test_sends_using_default_email_provider(self):
+        handler = AdminEmailHandler()
+        handler.emit(self.make_log_record())
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].sent_using, "default")
+
+    @override_settings(
+        ADMINS=["admin@example.com"],
+        EMAIL_PROVIDERS={},
+    )
+    def test_no_error_when_email_not_configured(self):
+        """
+        The AdminEmailHandler is enabled in Django's default LOGGING
+        configuration but should not cause an error if email is not configured.
+        """
+        handler = AdminEmailHandler()
+        handler.emit(self.make_log_record())
+        self.assertEqual(len(mail.outbox), 0)
+
+    @override_settings(
+        ADMINS=["admin@example.com"],
+        EMAIL_PROVIDERS={
+            "custom": {"BACKEND": "django.core.mail.backends.locmem.EmailBackend"}
+        },
+    )
+    def test_using_arg(self):
+        """The 'using' argument overrides the email provider for sending."""
+        handler = AdminEmailHandler(using="custom")
+        handler.emit(self.make_log_record())
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].sent_using, "custom")
+
+    # RemovedInDjango70Warning.
+    def test_using_conflicts_with_email_backend(self):
+        msg = "The 'email_backend' argument is not compatible with 'using'."
+        with self.assertRaisesMessage(ImproperlyConfigured, msg):
+            AdminEmailHandler(
+                email_backend="logging_tests.logconfig.MyEmailBackend", using="custom"
+            )
+
+    # RemovedInDjango70Warning.
+    def test_undocumented_connection_method(self):
+        """
+        Courtesy error if a custom subclass tries to override connection().
+        """
+
+        class CustomAdminEmailHandler(AdminEmailHandler):
+            def connection(self):
+                return mail.get_connection(some_important_option=True)
+
+        with self.assertRaisesMessage(
+            AttributeError,
+            "The undocumented AdminEmailHandler.connection() method is no longer used.",
+        ):
+            CustomAdminEmailHandler()
 
     @override_settings(
         ADMINS=["admin@example.com"],
