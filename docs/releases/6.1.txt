@@ -346,6 +346,11 @@ Models
   :class:`~django.db.models.query.QuerySet` is ordered and the ordering is
   deterministic.
 
+* The new :class:`~django.db.models.BitAnd`, :class:`~django.db.models.BitOr`,
+  and :class:`~django.db.models.BitXor` aggregates return the bitwise ``AND``,
+  ``OR``, ``XOR``, respectively. These aggregates were previously included only
+  in ``contrib.postgres``.
+
 Pagination
 ~~~~~~~~~~
 
@@ -450,6 +455,9 @@ backends.
 * The ``BaseSpatialOperations.get_geom_placeholder()`` method is renamed to
   ``get_geom_placeholder_sql`` and is expected to return a two-elements tuple
   composed of an SQL format string and a tuple of associated parameters.
+
+* Set the new ``DatabaseFeatures.supports_bit_aggregations`` attribute to
+  ``False`` if the database doesn't support bitwise aggregations.
 
 :mod:`django.contrib.admin`
 ---------------------------
@@ -644,6 +652,12 @@ Miscellaneous
 
 * The ``email_backend`` argument of :class:`.log.AdminEmailHandler` is
   deprecated in favor of the newly introduced ``using`` argument.
+
+* The ``BitAnd``, ``BitOr``, and ``BitXor`` classes in
+  ``django.contrib.postgres.aggregates`` are deprecated in favor of the
+  generally available :class:`~django.db.models.BitAnd`,
+  :class:`~django.db.models.BitOr`, and :class:`~django.db.models.BitXor`
+  classes.
 
 Features removed in 6.1
 =======================
